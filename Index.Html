@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Block Blast Web - Fixed Refill</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #161622;
+            color: #ffffff;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        h1 { margin-bottom: 5px; color: #ffcc00; }
+        #score-board { font-size: 20px; margin-bottom: 10px; font-weight: bold; }
+        #combo-text { font-size: 18px; color: #ff5722; height: 25px; font-weight: bold; }
+        
+        /* Papan Permainan 8x8 */
+        .board {
+            display: grid;
+            grid-template-columns: repeat(8, 42px);
+            grid-template-rows: repeat(8, 42px);
+            gap: 4px;
+            background: #1f1f2e;
+            padding: 10px;
+            border-radius: 12px;
+            margin: 15px auto;
+            width: max-content;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+            border: 2px solid #2d2d44;
+        }
+        .cell {
+            width: 42px;
+            height: 42px;
+            background-color: #262638;
+            border: 1px solid #36364f;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s, transform 0.1s;
+        }
+        .cell.filled {
+            background-color: #ff5722;
+            border: 1px solid #ff784e;
+            box-shadow: inset 0 0 8px rgba(0,0,0,0.4);
+            animation: popIn 0.2s ease-out;
+        }
+        .cell.preview {
+            background-color: #4b4b75;
+            border-color: #6a6a9e;
+            transform: scale(0.95);
+        }
+
+        /* Animasi saat baris/kolom hancur */
+        .cell.clearing {
+            animation: clearAnim 0.3s ease-out forwards;
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0.5); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        @keyframes clearAnim {
+            0% { transform: scale(1); background-color: #ffffff; }
+            50% { transform: scale(1.2); background-color: #ffeb3b; }
+            100% { transform: scale(0); opacity: 0; background-color: #262638; }
+        }
+
+        /* Area Pilihan Balok */
+        .pieces-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 25px;
+            margin-top: 25px;
+            flex-wrap: wrap;
+            min-height: 110px;
+        }
+        .piece-box {
+            background: transparent;
+            border: 2px solid transparent;
+            padding: 8px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .piece-box.selected {
+            border-color: #ffcc00;
+            background: rgba(255, 204, 0, 0.1);
+            transform: scale(1.05);
+        }
+        
+        /* Grid mini untuk pilihan balok */
+        .mini-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 20px);
+            grid-template-rows: repeat(4, 20px);
+            gap: 2px;
+        }
+        .mini-cell {
+            width: 20px;
+            height: 20px;
+            background: transparent;
+            border-radius: 3px;
+        }
+        .mini-cell.filled {
+            background-color: #ff5722;
+            border: 1px solid #ff784e;
+            box-shadow: inset 0 0 4px rgba(0,0,0,0.3);
+        }
+
+        #message {
+            margin-top: 15px;
+            font-size: 16px;
+            color: #a0a0c0;
+            min-height: 25px;
+        }
+
+        button {
+            margin-top: 15px;
+            padding: 10px 22px;
+            font-size: 16px;
+            background-color: #ffcc00;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            color: #161622;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #e6b800; }
+    </style>
+</head>
+<body>
+
+    <h1>Block Blast Web</h1>
+    <div id="score-board">Skor: <span id="score">0</span> | High Score: <span id="highscore">0</span></div>
+    <div id="combo-text"></div>
+    
+    <div class="board" id="game-board"></div>
+    
+    <div id="message">Ketuk salah satu balok di bawah, lalu ketuk papan!</div>
+
+    <div class="pieces-container" id="pieces-container"></div>
+
+    <br>
+    <button onclick="resetGame()">Mulai Ulang</button>
+
+    <script>
+        // --- Web Audio API untuk Efek Suara ---
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playSound(type) {
+            initAudio();
+            if (!audioCtx) return;
+
+            let osc = audioCtx.createOscillator();
+            let gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            let now = audioCtx.currentTime;
+
+            if (type === 'place') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.exponentialRampToValueAtTime(150, now + 0.1);
+                gainNode.gain.setValueAtTime(0.3, now);
+                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now);
+                osc.stop(now + 0.1);
+            } else if (type === 'clear') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(440, now);
+                osc.frequency.exponentialRampToValueAtTime(880, now + 0.25);
+                gainNode.gain.setValueAtTime(0.4, now);
+                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.25);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            } else if (type === 'gameover') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.linearRampToValueAtTime(100, now + 0.5);
+                gainNode.gain.setValueAtTime(0.4, now);
+                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.5);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            }
+        }
+
+        // --- Logika Permainan ---
+        const SIZE = 8;
+        let board = Array(SIZE).fill(null).map(() => Array(SIZE).fill('.'));
+        let score = 0;
+        let highscore = localStorage.getItem('block_blast_highscore') || 0;
+        let selectedPieceIndex = null;
+        let isAnimating = false;
+
+        const allPieces = [
+            { cells: [[0,0]], symbol: 'A' },
+            { cells: [[0,0], [0,1]], symbol: 'B' },
+            { cells: [[0,0], [1,0]], symbol: 'C' },
+            { cells: [[0,0], [0,1], [0,2]], symbol: 'D' },
+            { cells: [[0,0], [1,0], [2,0]], symbol: 'E' },
+            { cells: [[0,0], [0,1], [1,0], [1,1]], symbol: 'F' },
+            { cells: [[0,0], [0,1], [0,2], [0,3]], symbol: 'G' },
+            { cells: [[0,0], [1,0], [2,0], [3,0]], symbol: 'H' },
+            { cells: [[0,0], [1,0], [1,1]], symbol: 'I' },
+            { cells: [[0,1], [1,0], [1,1]], symbol: 'J' },
+            { cells: [[0,0], [0,1], [1,1], [1,2]], symbol: 'K' },
+            { cells: [[0,0], [0,1], [0,2], [1,1]], symbol: 'M' }
+        ];
+
+        let currentPieces = [];
+        let usedPieces = [false, false, false];
+
+        document.getElementById('highscore').innerText = highscore;
+
+        function initGame() {
+            board = Array(SIZE).fill(null).map(() => Array(SIZE).fill('.'));
+            score = 0;
+            selectedPieceIndex = null;
+            refillPieces();
+            updateUI();
+        }
+
+        function refillPieces() {
+            currentPieces = [];
+            usedPieces = [false, false, false];
+            for (let i = 0; i < 3; i++) {
+                let randomIndex = Math.floor(Math.random() * allPieces.length);
+                currentPieces.push(allPieces[randomIndex]);
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('score').innerText = score;
+            if (score > highscore) {
+                highscore = score;
+                localStorage.setItem('block_blast_highscore', highscore);
+                document.getElementById('highscore').innerText = highscore;
+            }
+            
+            // Render Papan 8x8
+            const boardEl = document.getElementById('game-board');
+            boardEl.innerHTML = '';
+            for (let r = 0; r < SIZE; r++) {
+                for (let c = 0; c < SIZE; c++) {
+                    const cellEl = document.createElement('div');
+                    cellEl.className = 'cell' + (board[r][c] !== '.' ? ' filled' : '');
+                    cellEl.dataset.row = r;
+                    cellEl.dataset.col = c;
+                    
+                    cellEl.addEventListener('mouseenter', () => handleCellHover(r, c, true));
+                    cellEl.addEventListener('mouseleave', () => handleCellHover(r, c, false));
+                    cellEl.addEventListener('click', () => handleCellClick(r, c));
+
+                    boardEl.appendChild(cellEl);
+                }
+            }
+
+            // Render 3 Pilihan Balok di Bawah
+            const container = document.getElementById('pieces-container');
+            container.innerHTML = '';
+            currentPieces.forEach((piece, index) => {
+                const box = document.createElement('div');
+                box.className = 'piece-box' + (selectedPieceIndex === index ? ' selected' : '');
+
+                if (usedPieces[index]) {
+                    box.style.display = 'none';
+                }
+
+                box.addEventListener('click', () => {
+                    if (isAnimating) return;
+                    initAudio();
+                    if (selectedPieceIndex === index) {
+                        selectedPieceIndex = null;
+                        document.getElementById('message').innerText = "Pilihan dibatalkan.";
+                    } else {
+                        selectedPieceIndex = index;
+                        document.getElementById('message').innerText = "Balok dipilih! Ketuk kotak di papan untuk meletakkan.";
+                    }
+                    updateUI();
+                });
+
+                const miniGrid = document.createElement('div');
+                miniGrid.className = 'mini-grid';
+                for (let r = 0; r < 4; r++) {
+                    for (let c = 0; c < 4; c++) {
+                        const mCell = document.createElement('div');
+                        mCell.className = 'mini-cell';
+                        if (piece.cells.some(cell => cell[0] === r && cell[1] === c)) {
+                            mCell.classList.add('filled');
+                        }
+                        miniGrid.appendChild(mCell);
+                    }
+                }
+                box.appendChild(miniGrid);
+                container.appendChild(box);
+            });
+
+            checkGameOver();
+        }
+
+        function handleCellHover(targetR, targetC, isEnter) {
+            if (selectedPieceIndex === null || usedPieces[selectedPieceIndex] || isAnimating) return;
+            let piece = currentPieces[selectedPieceIndex];
+            
+            for (let cell of piece.cells) {
+                let r = targetR + cell[0];
+                let c = targetC + cell[1];
+                if (r < SIZE && c < SIZE) {
+                    let cellEl = document.querySelector(`[data-row='${r}'][data-col='${c}']`);
+                    if (cellEl) {
+                        if (isEnter) cellEl.classList.add('preview');
+                        else cellEl.classList.remove('preview');
+                    }
+                }
+            }
+        }
+
+        function canPlace(piece, row, col) {
+            for (let cell of piece.cells) {
+                let bRow = row + cell[0];
+                let bCol = col + cell[1];
+                if (bRow < 0 || bRow >= SIZE || bCol < 0 || bCol >= SIZE) return false;
+                if (board[bRow][bCol] !== '.') return false;
+            }
+            return true;
+        }
+
+        function handleCellClick(row, col) {
+            if (selectedPieceIndex === null || usedPieces[selectedPieceIndex] || isAnimating) return;
+
+            let piece = currentPieces[selectedPieceIndex];
+            if (!canPlace(piece, row, col)) {
+                document.getElementById('message').innerText = "Tidak bisa menimpa balok lain atau keluar papan!";
+                return;
+            }
+
+            playSound('place');
+
+            for (let cell of piece.cells) {
+                board[row + cell[0]][col + cell[1]] = piece.symbol;
+            }
+
+            usedPieces[selectedPieceIndex] = true;
+            score += piece.cells.length * 10;
+            selectedPieceIndex = null;
+
+            processLinesAndAnimation();
+            document.getElementById('message').innerText = "";
+        }
+
+        function processLinesAndAnimation() {
+            let fullRows = Array(SIZE).fill(false);
+            let fullCols = Array(SIZE).fill(false);
+
+            for (let r = 0; r < SIZE; r++) {
+                if (board[r].every(cell => cell !== '.')) fullRows[r] = true;
+            }
+            for (let c = 0; c < SIZE; c++) {
+                if (board.every(row => row[c] !== '.')) fullCols[c] = true;
+            }
+
+            let cellsToClear = [];
+            for (let r = 0; r < SIZE; r++) {
+                for (let c = 0; c < SIZE; c++) {
+                    if (fullRows[r] || fullCols[c]) {
+                        if (board[r][c] !== '.') {
+                            cellsToClear.push({r, c});
+                        }
+                    }
+                }
+            }
+
+            let totalLines = fullRows.filter(Boolean).length + fullCols.filter(Boolean).length;
+            let comboTextEl = document.getElementById('combo-text');
+
+            if (cellsToClear.length > 0) {
+                isAnimating = true;
+                playSound('clear');
+
+                cellsToClear.forEach(item => {
+                    let cellEl = document.querySelector(`[data-row='${item.r}'][data-col='${item.c}']`);
+                    if (cellEl) cellEl.classList.add('clearing');
+                });
+
+                let comboBonus = totalLines * 100 * totalLines;
+                score += comboBonus;
+
+                if (totalLines > 1) {
+                    comboTextEl.innerText = `🔥 COMBO x${totalLines}! +${comboBonus} Poin`;
+                } else {
+                    comboTextEl.innerText = `✨ Bersih! +100 Poin`;
+                }
+
+                setTimeout(() => {
+                    cellsToClear.forEach(item => {
+                        board[item.r][item.c] = '.';
+                    });
+                    isAnimating = false;
+                    
+                    // Cek apakah ketiga blok sudah habis setelah animasi selesai
+                    if (usedPieces.every(u => u)) {
+                        refillPieces();
+                    }
+                    updateUI();
+                }, 300);
+            } else {
+                comboTextEl.innerText = "";
+                // Cek apakah ketiga blok sudah habis langsung di sini
+                if (usedPieces.every(u => u)) {
+                    refillPieces();
+                }
+                updateUI();
+            }
+        }
+
+        function checkGameOver() {
+            let hasMove = false;
+            for (let i = 0; i < 3; i++) {
+                if (usedPieces[i]) continue;
+                let piece = currentPieces[i];
+                for (let r = 0; r < SIZE; r++) {
+                    for (let c = 0; c < SIZE; c++) {
+                        if (canPlace(piece, r, c)) hasMove = true;
+                    }
+                }
+            }
+
+            if (!hasMove && usedPieces.some(u => !u)) {
+                playSound('gameover');
+                document.getElementById('message').innerText = "GAME OVER YOU LOSE.";
+                document.getElementById('combo-text').innerText = "😢 Tidak ada langkah tersisa!";
+            }
+        }
+
+        function resetGame() {
+            selectedPieceIndex = null;
+            isAnimating = false;
+            document.getElementById('combo-text').innerText = "";
+            initGame();
+            document.getElementById('message').innerText = "Ketuk salah satu balok di bawah, lalu ketuk papan!";
+        }
+
+        initGame();
+    </script>
+</body>
+</html>
